@@ -4,9 +4,11 @@ import { COLORS, GAME_SETTINGS } from '../utils/constants';
 export class DayNightCycle {
     constructor(scene) {
         this.scene = scene;
-        this.time = 0;
+        this.time = GAME_SETTINGS.DAY_DURATION * GAME_SETTINGS.DAY_START;
         this.setupSky();
         this.setupSun();
+        
+        this.update(0);
     }
 
     setupSky() {

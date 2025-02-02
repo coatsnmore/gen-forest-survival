@@ -43,6 +43,8 @@ class Game {
         this.sceneManager.scene.userData.gameManager = this.gameManager;
         
         this.player = new Player(this.sceneManager.camera, this.sceneManager.scene);
+        // Store player reference in scene
+        this.sceneManager.scene.userData.player = this.player;
         
         this.lastTime = 0;
         this.initialize();

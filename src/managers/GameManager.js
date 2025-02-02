@@ -52,31 +52,31 @@ export class GameManager {
     createZombies() {
         // Create initial zombies
         for (let i = 0; i < 5; i++) {
-            const position = new THREE.Vector3(
-                Math.random() * 40 - 20,
-                2,
-                Math.random() * 40 - 20
-            );
-            const zombie = new Zombie(position);
+            const position = this.getRandomSpawnPosition();
+            const zombie = new Zombie(position, this.sceneManager.scene);
             this.zombies.push(zombie);
             this.sceneManager.add(zombie);
         }
 
         // Spawn new zombies periodically
         setInterval(() => {
-            if (this.zombies.length < 10) { // Max zombies
-                const angle = Math.random() * Math.PI * 2;
-                const distance = 30; // Spawn distance from player
-                const position = new THREE.Vector3(
-                    Math.cos(angle) * distance,
-                    2,
-                    Math.sin(angle) * distance
-                );
-                const zombie = new Zombie(position);
+            if (this.zombies.length < 10) {
+                const position = this.getRandomSpawnPosition();
+                const zombie = new Zombie(position, this.sceneManager.scene);
                 this.zombies.push(zombie);
                 this.sceneManager.add(zombie);
             }
-        }, 5000); // Every 5 seconds
+        }, 5000);
+    }
+
+    getRandomSpawnPosition() {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 50 + Math.random() * 30; // Spawn between 50-80 units away
+        return new THREE.Vector3(
+            Math.cos(angle) * distance,
+            0,
+            Math.sin(angle) * distance
+        );
     }
 
     update(deltaTime) {
@@ -89,11 +89,13 @@ export class GameManager {
     }
 
     updateZombies(deltaTime) {
+        const playerPosition = this.sceneManager.camera.position.clone();
+        
         this.zombies.forEach(zombie => {
             if (this.dyingZombies.has(zombie)) {
                 this.updateDyingZombie(zombie);
             } else {
-                zombie.update(deltaTime, this.sceneManager.camera.position);
+                zombie.update(deltaTime, playerPosition);
                 
                 // Check if zombie died from damage
                 if (zombie.health <= 0 && !this.dyingZombies.has(zombie)) {
@@ -121,6 +123,14 @@ export class GameManager {
             this.zombies = this.zombies.filter(z => z !== zombie);
             this.healthBars.delete(zombie);
             this.dyingZombies.delete(zombie);
+
+            // Respawn zombie after delay
+            setTimeout(() => {
+                const position = this.getRandomSpawnPosition();
+                const newZombie = new Zombie(position, this.sceneManager.scene);
+                this.zombies.push(newZombie);
+                this.sceneManager.add(newZombie);
+            }, 3000); // 3 seconds delay
         }
     }
 } 

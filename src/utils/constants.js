@@ -3,8 +3,9 @@ import * as THREE from 'three';
 export const GAME_SETTINGS = {
     PLAYER_HEIGHT: 5,
     GRAVITY: -9.8,
-    DAY_DURATION: 120,
-    ATTACK_RANGE: 3,
+    DAY_DURATION: 600, // 10 minutes for a full day/night cycle
+    DAY_START: 0.25, // Start at 1/4 through the cycle (morning)
+    ATTACK_RANGE: 6,
     DAMAGE: {
         SWORD: 34,
         TREE: 50

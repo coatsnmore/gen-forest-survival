@@ -6,7 +6,14 @@ export class Player {
         this.camera = camera;
         this.scene = scene;
         this.isAttacking = false;
+        this.health = 100;
+        this.maxHealth = 100;
+        this.isInvulnerable = false;
+        this.invulnerabilityTime = 1; // Seconds of invulnerability after being hit
+        this.COLLISION_RADIUS = 2; // Radius of player's collision cylinder
         this.createArm();
+        this.createHealthBar();
+        this.createCollisionBoundary();
         
         // Make sure camera is at proper height
         this.camera.position.y = GAME_SETTINGS.PLAYER_HEIGHT;
@@ -192,6 +199,172 @@ export class Player {
     }
 
     update(deltaTime) {
-        // Add any continuous updates needed
+        // Update collision boundary position to match player
+        this.collisionBoundary.position.x = this.camera.position.x;
+        this.collisionBoundary.position.z = this.camera.position.z;
+
+        // Check for zombie collisions
+        if (!this.isInvulnerable) {
+            const zombies = [];
+            this.scene.traverse((object) => {
+                if (object.userData && object.userData.isZombie) {
+                    zombies.push(object);
+                }
+            });
+
+            zombies.forEach(zombie => {
+                const distance = zombie.position.distanceTo(this.camera.position);
+                if (distance < this.COLLISION_RADIUS + 1) { // +1 for zombie's size
+                    this.takeDamage(10); // Take damage on collision
+                    
+                    // Push player back from zombie
+                    const pushDirection = new THREE.Vector3()
+                        .subVectors(this.camera.position, zombie.position)
+                        .normalize()
+                        .multiplyScalar(2); // Push distance
+                    
+                    this.camera.position.x += pushDirection.x;
+                    this.camera.position.z += pushDirection.z;
+                }
+            });
+        }
+    }
+
+    createHealthBar() {
+        // Create HUD elements
+        const healthBarContainer = document.createElement('div');
+        healthBarContainer.style.position = 'fixed';
+        healthBarContainer.style.bottom = '20px';
+        healthBarContainer.style.left = '20px';
+        healthBarContainer.style.width = '200px';
+        healthBarContainer.style.height = '20px';
+        healthBarContainer.style.backgroundColor = '#333';
+        healthBarContainer.style.border = '2px solid #666';
+
+        this.healthBarFill = document.createElement('div');
+        this.healthBarFill.style.width = '100%';
+        this.healthBarFill.style.height = '100%';
+        this.healthBarFill.style.backgroundColor = '#ff0000';
+        this.healthBarFill.style.transition = 'width 0.2s';
+
+        healthBarContainer.appendChild(this.healthBarFill);
+        document.body.appendChild(healthBarContainer);
+    }
+
+    takeDamage(amount) {
+        if (this.isInvulnerable) return;
+
+        this.health = Math.max(0, this.health - amount);
+        this.healthBarFill.style.width = `${(this.health / this.maxHealth) * 100}%`;
+
+        // Visual feedback
+        this.scene.traverse((object) => {
+            if (object.material && object.material.color) {
+                object.material._originalColor = object.material.color.clone();
+                object.material.color.setHex(0xff0000);
+            }
+        });
+
+        setTimeout(() => {
+            this.scene.traverse((object) => {
+                if (object.material && object.material._originalColor) {
+                    object.material.color.copy(object.material._originalColor);
+                }
+            });
+        }, 200);
+
+        // Invulnerability period
+        this.isInvulnerable = true;
+        setTimeout(() => {
+            this.isInvulnerable = false;
+        }, this.invulnerabilityTime * 1000);
+
+        // Check for death
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+
+    die() {
+        // Create game over screen
+        const gameOverScreen = document.createElement('div');
+        gameOverScreen.style.position = 'fixed';
+        gameOverScreen.style.top = '0';
+        gameOverScreen.style.left = '0';
+        gameOverScreen.style.width = '100%';
+        gameOverScreen.style.height = '100%';
+        gameOverScreen.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
+        gameOverScreen.style.display = 'flex';
+        gameOverScreen.style.flexDirection = 'column';
+        gameOverScreen.style.justifyContent = 'center';
+        gameOverScreen.style.alignItems = 'center';
+        gameOverScreen.style.color = 'white';
+        gameOverScreen.style.fontSize = '48px';
+        gameOverScreen.style.fontFamily = 'Arial, sans-serif';
+        gameOverScreen.style.cursor = 'pointer';
+        gameOverScreen.style.zIndex = '1000';
+
+        const gameOverText = document.createElement('div');
+        gameOverText.textContent = 'GAME OVER';
+        gameOverText.style.marginBottom = '20px';
+        gameOverScreen.appendChild(gameOverText);
+
+        const restartText = document.createElement('div');
+        restartText.textContent = 'Click to Restart';
+        restartText.style.fontSize = '24px';
+        gameOverScreen.appendChild(restartText);
+
+        document.body.appendChild(gameOverScreen);
+
+        // Unlock pointer on death
+        if (document.pointerLockElement) {
+            document.exitPointerLock();
+        }
+
+        // Handle restart
+        const handleRestart = () => {
+            // Remove game over screen
+            document.body.removeChild(gameOverScreen);
+            
+            // Reset player state
+            this.health = this.maxHealth;
+            this.healthBarFill.style.width = '100%';
+            this.isInvulnerable = false;
+            
+            // Reset position
+            this.camera.position.set(0, GAME_SETTINGS.PLAYER_HEIGHT, 0);
+            
+            // Reset all zombies
+            const gameManager = this.scene.userData.gameManager;
+            if (gameManager) {
+                // Remove all existing zombies
+                gameManager.zombies.forEach(zombie => {
+                    this.scene.remove(zombie);
+                });
+                gameManager.zombies = [];
+                gameManager.dyingZombies.clear();
+                
+                // Create new zombies
+                gameManager.createZombies();
+            }
+
+            // Remove click listener
+            gameOverScreen.removeEventListener('click', handleRestart);
+        };
+
+        gameOverScreen.addEventListener('click', handleRestart);
+    }
+
+    createCollisionBoundary() {
+        // Create invisible collision cylinder
+        const geometry = new THREE.CylinderGeometry(this.COLLISION_RADIUS, this.COLLISION_RADIUS, GAME_SETTINGS.PLAYER_HEIGHT * 2, 8);
+        const material = new THREE.MeshBasicMaterial({
+            visible: false, // Make it invisible
+            transparent: true,
+            opacity: 0
+        });
+        this.collisionBoundary = new THREE.Mesh(geometry, material);
+        this.collisionBoundary.position.y = GAME_SETTINGS.PLAYER_HEIGHT;
+        this.scene.add(this.collisionBoundary);
     }
 } 
