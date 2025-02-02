@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Survival Game</title>
+    <title>Forest Game</title>
     <style>
         body {
             margin: 0;
@@ -17,23 +17,24 @@
             text-align: center;
             color: white;
             font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+            font-size: 1.5em;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
             pointer-events: none;
         }
-        #instructions.hidden {
+        .hidden {
             display: none;
         }
     </style>
 </head>
 <body>
     <div id="instructions">
-        <h1>3D Survival Game</h1>
-        <p>Click to start</p>
-        <p>WASD or Arrow Keys to move</p>
-        <p>Click to attack with sword</p>
-        <p>ESC to pause</p>
+        Click to start<br>
+        WASD = Move<br>
+        SPACE = Jump<br>
+        CLICK = Attack<br>
+        ESC = Pause
     </div>
     <script type="module" src="/src/main.js"></script>
 </body>

@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls';
+import { SceneManager } from './managers/SceneManager';
+import { Controls } from './systems/Controls';
+import { Tree } from './components/Tree';
+import { DayNightCycle } from './systems/DayNightCycle';
+import { GameManager } from './managers/GameManager';
+import { Player } from './components/Player';
 
 let camera, scene, renderer, controls;
 let moveForward = false;
@@ -19,12 +25,67 @@ let sky, sun;
 let time = 0;
 const DAY_DURATION = 120; // seconds for a full day/night cycle
 let mountains = [];
+let armGroup; // Store reference to entire arm group
+let trees = [];
+let fallingTrees = new Set();
 
 const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
 
-init();
-animate();
+class Game {
+    constructor() {
+        this.sceneManager = new SceneManager();
+        this.controls = new Controls(this.sceneManager.camera, document.body);
+        this.dayNightCycle = new DayNightCycle(this.sceneManager.scene);
+        this.gameManager = new GameManager(this.sceneManager);
+        
+        // Store GameManager reference in scene
+        this.sceneManager.scene.userData.gameManager = this.gameManager;
+        
+        this.player = new Player(this.sceneManager.camera, this.sceneManager.scene);
+        
+        this.lastTime = 0;
+        this.initialize();
+        this.setupEventListeners();
+    }
+
+    setupEventListeners() {
+        document.addEventListener('click', (event) => {
+            if (this.controls.isLocked()) {
+                this.player.attack();
+            }
+        });
+    }
+
+    initialize() {
+        this.gameManager.initializeWorld();
+        this.animate(0);
+    }
+
+    animate(currentTime) {
+        requestAnimationFrame(this.animate.bind(this));
+        
+        const deltaTime = (currentTime - this.lastTime) / 1000;
+        this.lastTime = currentTime;
+
+        this.update(deltaTime);
+        this.render();
+    }
+
+    update(deltaTime) {
+        this.controls.update(deltaTime);
+        this.dayNightCycle.update(deltaTime);
+        this.gameManager.update(deltaTime);
+        this.player.update(deltaTime);
+    }
+
+    render() {
+        this.sceneManager.render();
+    }
+}
+
+// Start the game
+const game = new Game();
 
 function init() {
     scene = new THREE.Scene();
@@ -86,11 +147,11 @@ function init() {
     scene.add(ground);
 
     // Trees
-    for (let i = 0; i < 200; i++) { // More trees
+    for (let i = 0; i < 100; i++) { // Reduced number of trees for better performance
         createTree(
-            Math.random() * 800 - 400, // Spread trees over larger area
+            Math.random() * 400 - 200, // Smaller area for denser forest
             0,
-            Math.random() * 800 - 400
+            Math.random() * 400 - 200
         );
     }
 
@@ -119,14 +180,6 @@ function init() {
     });
 
     // Event listeners
-    document.addEventListener('click', function () {
-        if (!controls.isLocked) {
-            controls.lock();
-        } else {
-            attack(); // Attack when clicking if game is running
-        }
-    });
-
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
 
@@ -142,55 +195,242 @@ function init() {
 }
 
 function createTree(x, y, z) {
-    const trunkGeometry = new THREE.CylinderGeometry(0.4, 0.6, 8, 8);
+    const tree = new THREE.Group();
+    
+    // Create main trunk
+    const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.5, 8, 8);
     const trunkMaterial = new THREE.MeshStandardMaterial({ 
         color: 0x4a2805,
         roughness: 0.9,
         metalness: 0.1
     });
     const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-    trunk.position.y = 4;
-
-    // Create multiple layers of leaves for fuller appearance
-    const treeTop = new THREE.Group();
-    const leafColors = [0x0d5302, 0x0a4502, 0x0c4f02];
+    trunk.position.y = 4; // Center the trunk at its base
     
-    for(let i = 0; i < 3; i++) {
-        const leafGeometry = new THREE.ConeGeometry(3 - i * 0.3, 6, 8);
-        const leafMaterial = new THREE.MeshStandardMaterial({ 
-            color: leafColors[i],
-            roughness: 0.8,
-            metalness: 0.1
-        });
-        const leaves = new THREE.Mesh(leafGeometry, leafMaterial);
-        leaves.position.y = i * 2;
-        treeTop.add(leaves);
-    }
-    
-    treeTop.position.y = 8;
+    // Create branches with better connection points
+    const createBranch = (startY, angle, length, thickness) => {
+        const branchGroup = new THREE.Group();
+        
+        // Main branch cylinder
+        const branchGeometry = new THREE.CylinderGeometry(thickness * 0.7, thickness, length, 6);
+        const branch = new THREE.Mesh(branchGeometry, trunkMaterial);
+        
+        // Rotate the branch cylinder so it extends outward properly
+        branch.rotation.x = Math.PI / 2;
+        branch.position.z = length / 2;
+        
+        branchGroup.add(branch);
+        branchGroup.position.y = startY;
+        branchGroup.rotation.z = angle;
+        
+        return branchGroup;
+    };
 
-    const tree = new THREE.Group();
+    // Create foliage clusters with better connection
+    const createFoliageCluster = (x, y, z, scale) => {
+        const cluster = new THREE.Group();
+        const leafColors = [0x0d5302, 0x0a4502, 0x0c4f02];
+        
+        // Create cone-shaped leaf cluster
+        for (let i = 0; i < 3; i++) {
+            const leafGeometry = new THREE.ConeGeometry(1.2 - i * 0.2, 2, 8);
+            const leafMaterial = new THREE.MeshStandardMaterial({ 
+                color: leafColors[i],
+                roughness: 0.8,
+                metalness: 0.1
+            });
+            const leaves = new THREE.Mesh(leafGeometry, leafMaterial);
+            
+            // Stack leaves with slight offset
+            leaves.position.y = i * 0.3;
+            leaves.rotation.y = (Math.PI * 2 / 3) * i; // Rotate each layer for fuller appearance
+            leaves.scale.set(scale, scale, scale);
+            cluster.add(leaves);
+        }
+        
+        cluster.position.set(x, y, z);
+        return cluster;
+    };
+
+    // Create main branches at different angles
+    const branches = [
+        createBranch(6, Math.PI/4, 3, 0.2),
+        createBranch(6, -Math.PI/4, 3, 0.2),
+        createBranch(5, Math.PI/3, 2.5, 0.2),
+        createBranch(5, -Math.PI/3, 2.5, 0.2),
+        createBranch(4, Math.PI/6, 2, 0.15),
+        createBranch(4, -Math.PI/6, 2, 0.15)
+    ];
+
+    // Add foliage to branches
+    branches.forEach(branch => {
+        // Calculate the end point of the branch in local space
+        const branchLength = branch.children[0].geometry.parameters.height;
+        const foliageScale = 0.8;
+        
+        // Create and position foliage at branch end
+        const foliage = createFoliageCluster(
+            0,
+            0,
+            branchLength,  // Position at end of branch
+            foliageScale
+        );
+        
+        // Add foliage to branch group
+        branch.add(foliage);
+    });
+
+    // Create main top foliage
+    const topFoliage = createFoliageCluster(0, 8, 0, 2);
+
+    // Assemble tree
     tree.add(trunk);
-    tree.add(treeTop);
-    
-    // Add some random rotation and scale variation
+    branches.forEach(branch => tree.add(branch));
+    tree.add(topFoliage);
+
+    // Random rotation and scale
     tree.rotation.y = Math.random() * Math.PI * 2;
     const scale = 0.8 + Math.random() * 0.4;
     tree.scale.set(scale, scale, scale);
     
+    // Position tree
     tree.position.set(x, 0, z);
-    trunk.castShadow = true;
-    treeTop.children.forEach(leaves => leaves.castShadow = true);
     
+    // Setup shadows
+    tree.traverse(object => {
+        if (object instanceof THREE.Mesh) {
+            object.castShadow = true;
+            object.receiveShadow = true;
+        }
+    });
+    
+    // Add tree properties for gameplay
+    tree.health = 100;
+    tree.originalRotation = tree.rotation.clone();
+    tree.fallDirection = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+    
+    // Make sure all tree parts are properly tagged
+    tree.traverse(object => {
+        if (object instanceof THREE.Mesh) {
+            object.userData.isTreePart = true;
+            object.userData.parentTree = tree;
+        }
+    });
+    
+    tree.updateMatrix();
+    tree.updateMatrixWorld();
+    
+    trees.push(tree);
     scene.add(tree);
+    
+    return tree;
 }
 
 function createSword() {
-    const swordGeometry = new THREE.BoxGeometry(0.1, 1, 0.1);
-    const swordMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
-    sword = new THREE.Mesh(swordGeometry, swordMaterial);
-    sword.position.set(0.5, -0.5, -1);
-    camera.add(sword);
+    // Create arm group
+    const arm = new THREE.Group();
+    armGroup = arm;
+    
+    // Create arm mesh with better proportions
+    const upperArmGeometry = new THREE.CylinderGeometry(0.08, 0.07, 0.5, 8);
+    const forearmGeometry = new THREE.CylinderGeometry(0.07, 0.06, 0.5, 8);
+    const armMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0xffdbac,
+        roughness: 0.3,
+        metalness: 0.1
+    });
+    
+    // Create upper arm and forearm
+    const upperArm = new THREE.Mesh(upperArmGeometry, armMaterial);
+    const forearm = new THREE.Mesh(forearmGeometry, armMaterial);
+    
+    // Position arm parts
+    upperArm.position.set(0.3, -0.1, -0.3);
+    forearm.position.set(0.3, -0.4, -0.5);
+    
+    // Rotate arm parts for natural position
+    upperArm.rotation.x = -Math.PI / 8;
+    upperArm.rotation.z = Math.PI / 6;
+    forearm.rotation.x = -Math.PI / 6;
+    forearm.rotation.z = Math.PI / 6;
+    
+    // Create hand
+    const handGeometry = new THREE.BoxGeometry(0.08, 0.15, 0.08);
+    const handMesh = new THREE.Mesh(handGeometry, armMaterial);
+    handMesh.position.set(0.3, -0.6, -0.7);
+    handMesh.rotation.x = -Math.PI / 4;
+    handMesh.rotation.z = Math.PI / 6;
+    
+    // Create sword parts with better proportions
+    const swordGroup = new THREE.Group();
+    
+    // Blade
+    const bladeGeometry = new THREE.BoxGeometry(0.03, 1, 0.08);
+    const bladeMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0xcccccc,
+        metalness: 0.9,
+        roughness: 0.1
+    });
+    const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
+    blade.position.y = 0.6;
+    
+    // Crossguard
+    const crossGuardGeometry = new THREE.BoxGeometry(0.2, 0.05, 0.12);
+    const crossGuardMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x8b4513,
+        metalness: 0.7,
+        roughness: 0.3
+    });
+    const crossGuard = new THREE.Mesh(crossGuardGeometry, crossGuardMaterial);
+    
+    // Handle with grip texture
+    const handleGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.25, 8);
+    const handleMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x4a3520,
+        roughness: 0.9,
+        metalness: 0.1
+    });
+    const handle = new THREE.Mesh(handleGeometry, handleMaterial);
+    handle.position.y = -0.15;
+    
+    // Pommel
+    const pommelGeometry = new THREE.SphereGeometry(0.04, 8, 8);
+    const pommelMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x8b4513,
+        metalness: 0.7,
+        roughness: 0.3
+    });
+    const pommel = new THREE.Mesh(pommelGeometry, pommelMaterial);
+    pommel.position.y = -0.3;
+    
+    // Assemble sword
+    swordGroup.add(blade);
+    swordGroup.add(crossGuard);
+    swordGroup.add(handle);
+    swordGroup.add(pommel);
+    
+    // Position sword in hand
+    swordGroup.position.copy(handMesh.position);
+    swordGroup.rotation.x = -Math.PI / 4;
+    swordGroup.rotation.y = Math.PI / 6;
+    swordGroup.position.x += 0.1;
+    swordGroup.position.z -= 0.1;
+    
+    // Add everything to the arm group
+    arm.add(upperArm);
+    arm.add(forearm);
+    arm.add(handMesh);
+    arm.add(swordGroup);
+    
+    // Store sword group for animation
+    sword = swordGroup;
+    
+    // Position entire arm group
+    arm.position.set(0.2, -0.3, 0.3);
+    arm.rotation.x = Math.PI / 8;
+    
+    // Add to camera
+    camera.add(arm);
     scene.add(camera);
 }
 
@@ -351,69 +591,6 @@ function onKeyUp(event) {
             moveRight = false;
             break;
     }
-}
-
-function attack() {
-    sword.rotation.x = Math.PI / 4;
-    setTimeout(() => {
-        sword.rotation.x = 0;
-    }, 200);
-
-    const raycaster = new THREE.Raycaster();
-    const center = new THREE.Vector2(0, 0);
-    raycaster.setFromCamera(center, camera);
-    
-    const ATTACK_RANGE = 3;
-    const DAMAGE = 34;
-
-    zombies.forEach(zombie => {
-        if (dyingZombies.has(zombie)) return; // Skip zombies that are already dying
-        
-        const distanceToZombie = zombie.position.distanceTo(camera.position);
-        
-        if (distanceToZombie <= ATTACK_RANGE) {
-            const directionToZombie = new THREE.Vector3()
-                .subVectors(zombie.position, camera.position)
-                .normalize();
-            const dot = directionToZombie.dot(raycaster.ray.direction);
-            
-            if (dot > 0.5) {
-                zombie.health -= DAMAGE;
-                
-                const healthBar = healthBars.get(zombie);
-                if (healthBar) {
-                    healthBar.scale.x = Math.max(zombie.health / 100, 0);
-                }
-                
-                // Hit flash
-                zombie.children.forEach(part => {
-                    if (part.material && part.material.color) {
-                        const originalColor = part.material.color.getHex();
-                        part.material.color.setHex(0xff0000);
-                        setTimeout(() => {
-                            part.material.color.setHex(originalColor);
-                        }, 100);
-                    }
-                });
-
-                if (zombie.health <= 0 && !dyingZombies.has(zombie)) {
-                    // Start death animation
-                    dyingZombies.add(zombie);
-                    zombie.deathTime = Date.now();
-                    zombie.originalPosition = zombie.position.y;
-                    
-                    // Hide health bar immediately
-                    const healthBar = zombie.children[zombie.children.length - 1];
-                    const healthBarBg = zombie.children[zombie.children.length - 2];
-                    healthBar.visible = false;
-                    healthBarBg.visible = false;
-                    
-                    // Spawn new zombie after delay
-                    setTimeout(createZombie, 3000);
-                }
-            }
-        }
-    });
 }
 
 function animate() {
@@ -600,6 +777,59 @@ function animate() {
         if (zombie.leftLeg && zombie.rightLeg) {
             zombie.leftLeg.rotation.x = Math.sin(time * walkSpeed) * 0.5;
             zombie.rightLeg.rotation.x = Math.sin(time * walkSpeed + Math.PI) * 0.5;
+        }
+    });
+
+    // Animate falling trees
+    trees.forEach(tree => {
+        if (fallingTrees.has(tree)) {
+            const fallDuration = 2000; // 2 seconds to fall
+            const timeSinceFall = Date.now() - tree.fallTime;
+            const fallProgress = Math.min(timeSinceFall / fallDuration, 1);
+            
+            // Ease out function for natural fall
+            const easeOut = t => 1 - Math.pow(1 - t, 3);
+            const easedProgress = easeOut(fallProgress);
+            
+            // Calculate fall rotation
+            const fallAngle = Math.PI / 2; // 90 degrees
+            const currentAngle = easedProgress * fallAngle;
+            
+            // Apply rotation based on fall direction
+            tree.rotation.copy(tree.fallStartRotation);
+            tree.rotateOnWorldAxis(
+                new THREE.Vector3(tree.fallDirection.x, 0, tree.fallDirection.z),
+                currentAngle
+            );
+            
+            // Add some bounce at the end
+            if (fallProgress > 0.8) {
+                const bounce = Math.sin((fallProgress - 0.8) * 5 * Math.PI) * 0.05 * (1 - (fallProgress - 0.8) / 0.2);
+                tree.position.y = bounce;
+            }
+            
+            // Add shake during fall
+            if (fallProgress < 0.9) {
+                const shake = Math.sin(fallProgress * 50) * 0.02 * (1 - fallProgress);
+                tree.rotation.z += shake;
+            }
+            
+            // Remove tree after animation
+            if (fallProgress >= 1) {
+                // Leave fallen tree in place
+                fallingTrees.delete(tree);
+                trees = trees.filter(t => t !== tree);
+                
+                // Optional: spawn new tree somewhere else after delay
+                setTimeout(() => {
+                    const newTree = createTree(
+                        Math.random() * 800 - 400,
+                        0,
+                        Math.random() * 800 - 400
+                    );
+                    scene.add(newTree);
+                }, 10000);
+            }
         }
     });
 
