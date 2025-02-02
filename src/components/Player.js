@@ -20,6 +20,17 @@ export class Player {
         
         // Add camera to scene
         this.scene.add(this.camera);
+
+        this.isHealing = false;
+        this.healingAmount = 0;
+        this.healingSpeed = 10; // Health points per second
+        
+        // Create survival timer
+        this.createSurvivalTimer();
+        this.startTime = Date.now();
+        this.endTime = null;
+        this.isDead = false;
+        this.timerUpdateInterval = null; // Add this line to track the timer interval
     }
 
     createArm() {
@@ -68,6 +79,14 @@ export class Player {
         // Position entire arm group
         this.armGroup.position.set(0.2, -0.3, 0.3);
         this.armGroup.rotation.x = Math.PI / 8;
+        
+        // Add shadows to all arm and sword parts
+        this.armGroup.traverse(object => {
+            if (object instanceof THREE.Mesh) {
+                object.castShadow = true;
+                object.receiveShadow = true;
+            }
+        });
         
         // Add to camera
         this.camera.add(this.armGroup);
@@ -165,7 +184,6 @@ export class Player {
                 if (dot > 0.5) { // In front of player
                     const isDead = zombie.damage(GAME_SETTINGS.DAMAGE.SWORD);
                     if (isDead) {
-                        // Let the GameManager handle zombie death
                         const gameManager = this.scene.userData.gameManager;
                         if (gameManager) {
                             gameManager.startZombieDeath(zombie);
@@ -182,14 +200,15 @@ export class Player {
             const elapsed = Date.now() - startTime;
             const progress = Math.min(elapsed / ATTACK_DURATION, 1);
             
-            // Swing arc
-            const swingAngle = Math.sin(progress * Math.PI) * (Math.PI / 3);
-            this.armGroup.rotation.x = Math.PI / 8 + swingAngle;
+            // Swing arc - changed to swing downward
+            const startAngle = Math.PI / 8;  // Starting position
+            const swingAngle = Math.sin(progress * Math.PI) * Math.PI / 2;  // Increased swing range
+            this.armGroup.rotation.x = startAngle - swingAngle;  // Subtract to swing down
             
             if (progress < 1) {
                 requestAnimationFrame(animate);
             } else {
-                this.armGroup.rotation.x = Math.PI / 8;
+                this.armGroup.rotation.x = startAngle;  // Return to starting position
                 this.isAttacking = false;
             }
         };
@@ -202,6 +221,22 @@ export class Player {
         // Update collision boundary position to match player
         this.collisionBoundary.position.x = this.camera.position.x;
         this.collisionBoundary.position.z = this.camera.position.z;
+
+        // Handle healing animation
+        if (this.isHealing && this.healingAmount > 0) {
+            const healThisFrame = this.healingSpeed * deltaTime;
+            const actualHeal = Math.min(healThisFrame, this.healingAmount);
+            
+            this.health = Math.min(this.maxHealth, this.health + actualHeal);
+            this.healingAmount -= actualHeal;
+            
+            // Update health bar
+            this.healthBarFill.style.width = `${(this.health / this.maxHealth) * 100}%`;
+            
+            if (this.healingAmount <= 0) {
+                this.isHealing = false;
+            }
+        }
 
         // Check for zombie collisions
         if (!this.isInvulnerable) {
@@ -227,6 +262,13 @@ export class Player {
                     this.camera.position.z += pushDirection.z;
                 }
             });
+        }
+
+        // Update timer only if alive and timer exists
+        if (!this.isDead && this.timerDisplay) {
+            const currentTime = Date.now();
+            const survivalTime = currentTime - this.startTime;
+            this.timerDisplay.textContent = `Survival Time: ${this.formatTime(survivalTime)}`;
         }
     }
 
@@ -286,8 +328,28 @@ export class Player {
     }
 
     die() {
+        this.isDead = true;
+        this.endTime = Date.now();
+        const survivalTime = this.endTime - this.startTime;
+        const formattedTime = this.formatTime(survivalTime);
+
+        // Clear timer interval and remove display
+        if (this.timerUpdateInterval) {
+            clearInterval(this.timerUpdateInterval);
+            this.timerUpdateInterval = null;
+        }
+
+        // Remove ALL existing timers
+        document.querySelectorAll('#survival-timer').forEach(timer => {
+            timer.remove();
+        });
+
+        // Force remove the timer reference
+        this.timerDisplay = null;
+
         // Create game over screen
         const gameOverScreen = document.createElement('div');
+        gameOverScreen.id = 'game-over-screen';  // Add ID for easier cleanup
         gameOverScreen.style.position = 'fixed';
         gameOverScreen.style.top = '0';
         gameOverScreen.style.left = '0';
@@ -299,20 +361,31 @@ export class Player {
         gameOverScreen.style.justifyContent = 'center';
         gameOverScreen.style.alignItems = 'center';
         gameOverScreen.style.color = 'white';
-        gameOverScreen.style.fontSize = '48px';
         gameOverScreen.style.fontFamily = 'Arial, sans-serif';
-        gameOverScreen.style.cursor = 'pointer';
         gameOverScreen.style.zIndex = '1000';
 
         const gameOverText = document.createElement('div');
         gameOverText.textContent = 'GAME OVER';
+        gameOverText.style.fontSize = '48px';
         gameOverText.style.marginBottom = '20px';
         gameOverScreen.appendChild(gameOverText);
 
-        const restartText = document.createElement('div');
-        restartText.textContent = 'Click to Restart';
-        restartText.style.fontSize = '24px';
-        gameOverScreen.appendChild(restartText);
+        const survivalTimeText = document.createElement('div');
+        survivalTimeText.textContent = `You survived for ${formattedTime}`;
+        survivalTimeText.style.fontSize = '32px';
+        survivalTimeText.style.marginBottom = '40px';
+        gameOverScreen.appendChild(survivalTimeText);
+
+        const restartButton = document.createElement('button');
+        restartButton.textContent = 'Click to Restart';
+        restartButton.style.fontSize = '24px';
+        restartButton.style.padding = '10px 20px';
+        restartButton.style.cursor = 'pointer';
+        restartButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+        restartButton.style.border = '2px solid white';
+        restartButton.style.color = 'white';
+        restartButton.style.borderRadius = '5px';
+        gameOverScreen.appendChild(restartButton);
 
         document.body.appendChild(gameOverScreen);
 
@@ -323,8 +396,10 @@ export class Player {
 
         // Handle restart
         const handleRestart = () => {
-            // Remove game over screen
-            document.body.removeChild(gameOverScreen);
+            // Remove any existing game over screens
+            document.querySelectorAll('#game-over-screen').forEach(screen => {
+                screen.remove();
+            });
             
             // Reset player state
             this.health = this.maxHealth;
@@ -333,6 +408,14 @@ export class Player {
             
             // Reset position
             this.camera.position.set(0, GAME_SETTINGS.PLAYER_HEIGHT, 0);
+            
+            // Reset death state and timer
+            this.isDead = false;
+            this.endTime = null;
+            this.startTime = Date.now();
+            
+            // Create new timer
+            this.createSurvivalTimer();
             
             // Reset all zombies
             const gameManager = this.scene.userData.gameManager;
@@ -348,23 +431,89 @@ export class Player {
                 gameManager.createZombies();
             }
 
-            // Remove click listener
-            gameOverScreen.removeEventListener('click', handleRestart);
+            // Request pointer lock again
+            document.body.requestPointerLock();
         };
 
-        gameOverScreen.addEventListener('click', handleRestart);
+        // Add click event to button only
+        restartButton.addEventListener('click', handleRestart, { once: true });
     }
 
     createCollisionBoundary() {
         // Create invisible collision cylinder
         const geometry = new THREE.CylinderGeometry(this.COLLISION_RADIUS, this.COLLISION_RADIUS, GAME_SETTINGS.PLAYER_HEIGHT * 2, 8);
         const material = new THREE.MeshBasicMaterial({
-            visible: false, // Make it invisible
+            visible: false,
             transparent: true,
             opacity: 0
         });
         this.collisionBoundary = new THREE.Mesh(geometry, material);
         this.collisionBoundary.position.y = GAME_SETTINGS.PLAYER_HEIGHT;
+        this.collisionBoundary.castShadow = true; // Add shadow casting
         this.scene.add(this.collisionBoundary);
+    }
+
+    heal(amount) {
+        if (this.health >= this.maxHealth) return;
+
+        // Start healing animation
+        this.isHealing = true;
+        this.healingAmount = amount;
+        
+        // Visual feedback
+        const flash = document.createElement('div');
+        flash.style.position = 'fixed';
+        flash.style.top = '0';
+        flash.style.left = '0';
+        flash.style.width = '100%';
+        flash.style.height = '100%';
+        flash.style.backgroundColor = 'rgba(0, 255, 0, 0.2)';
+        flash.style.pointerEvents = 'none';
+        flash.style.transition = 'opacity 0.5s';
+        document.body.appendChild(flash);
+        
+        // Add healing sound
+        const healSound = new Audio('/path/to/heal-sound.mp3'); // TODO: Add actual sound file
+        healSound.volume = 0.3;
+        healSound.play().catch(() => {}); // Ignore errors if sound fails to play
+        
+        // Fade out and remove flash
+        setTimeout(() => {
+            flash.style.opacity = '0';
+            setTimeout(() => document.body.removeChild(flash), 500);
+        }, 100);
+    }
+
+    createSurvivalTimer() {
+        // Clear any existing timer interval
+        if (this.timerUpdateInterval) {
+            clearInterval(this.timerUpdateInterval);
+            this.timerUpdateInterval = null;
+        }
+
+        // Remove ALL existing timers
+        document.querySelectorAll('#survival-timer').forEach(timer => {
+            timer.remove();
+        });
+
+        this.timerDisplay = document.createElement('div');
+        this.timerDisplay.id = 'survival-timer';
+        this.timerDisplay.style.position = 'fixed';
+        this.timerDisplay.style.top = '20px';
+        this.timerDisplay.style.left = '50%';
+        this.timerDisplay.style.transform = 'translateX(-50%)';
+        this.timerDisplay.style.color = 'white';
+        this.timerDisplay.style.fontSize = '24px';
+        this.timerDisplay.style.fontFamily = 'Arial, sans-serif';
+        this.timerDisplay.style.textShadow = '2px 2px 2px black';
+        this.timerDisplay.style.zIndex = '100';
+        document.body.appendChild(this.timerDisplay);
+    }
+
+    formatTime(milliseconds) {
+        const seconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
 } 
